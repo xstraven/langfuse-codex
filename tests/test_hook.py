@@ -11,6 +11,8 @@ class FakeTracer:
         self.turn_roots: list[tuple[str, str]] = []
         self.observations: list[tuple[str, str]] = []
         self.responses: list[tuple[str, str]] = []
+        self.trace_names: list[str] = []
+        self.trace_metadata: list[dict[str, object]] = []
 
     def ensure_turn_root(self, state, trace_context, *, prompt=None):
         turn_state = state.turns.get(trace_context.turn_id)
@@ -21,7 +23,11 @@ class FakeTracer:
             state.turns[trace_context.turn_id] = turn_state
         if prompt:
             turn_state.prompt = prompt
+        turn_state.trace_name = trace_context.trace_name
+        turn_state.trace_metadata.update(trace_context.trace_metadata)
         self.turn_roots.append((trace_context.session_id, trace_context.turn_id))
+        self.trace_names.append(trace_context.trace_name)
+        self.trace_metadata.append(dict(trace_context.trace_metadata))
         return turn_state
 
     def record_observation(self, turn_state, trace_context, observation):
@@ -114,6 +120,6 @@ def test_hook_processor_emits_observations_and_final_response(tmp_path: Path) ->
     }
     processor.handle(stop_payload)
 
-    assert ("turn-1", "exec_command") in tracer.observations
+    assert ("turn-1", "terminal.exec") in tracer.observations
     assert ("turn-1", "Finished") in tracer.responses
-
+    assert tracer.trace_names[-1] == "codex-turn: Trace this turn"

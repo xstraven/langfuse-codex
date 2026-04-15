@@ -40,6 +40,27 @@ def test_hook_processor_writes_trace_to_langfuse(tmp_path: Path) -> None:
 
     transcript_entries = [
         {
+            "type": "session_meta",
+            "payload": {
+                "id": session_id,
+                "cwd": str(Path.cwd()),
+                "originator": "Codex Desktop",
+                "cli_version": "0.119.0-alpha.28",
+                "source": "desktop",
+                "model_provider": "openai",
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "task_started",
+                "turn_id": turn_id,
+                "started_at": 100,
+                "model_context_window": 258400,
+                "collaboration_mode_kind": "default",
+            },
+        },
+        {
             "type": "response_item",
             "payload": {
                 "type": "function_call",
@@ -72,6 +93,27 @@ def test_hook_processor_writes_trace_to_langfuse(tmp_path: Path) -> None:
                 "type": "function_call_output",
                 "call_id": "call-live-1",
                 "output": "tool finished",
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+                    "last_token_usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+                    "model_context_window": 258400,
+                },
+                "rate_limits": {"primary": {"used_percent": 2.0}},
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "turn_id": turn_id,
+                "completed_at": 120,
+                "duration_ms": 2000,
             },
         },
         {
@@ -123,24 +165,37 @@ def test_hook_processor_writes_trace_to_langfuse(tmp_path: Path) -> None:
     )
 
     try:
-        for _ in range(20):
+        for _ in range(30):
             try:
-                trace = api_client.api.trace.get(trace_id, fields="observations")
+                trace = api_client.api.trace.get(trace_id, fields="observations,io")
             except Exception:
                 time.sleep(1)
                 continue
-            if trace.observations:
+            observation_names = {observation.name for observation in trace.observations}
+            if (
+                "terminal.exec" in observation_names
+                and "assistant-response" in observation_names
+                and trace.output
+            ):
                 break
             time.sleep(1)
         else:
             pytest.fail("Trace never became available in Langfuse.")
 
-        observation_names = {observation.name for observation in trace.observations}
+        exec_observations = [observation for observation in trace.observations if observation.name == "terminal.exec"]
+        assistant_observations = [observation for observation in trace.observations if observation.name == "assistant-response"]
         assert trace.id == trace_id
-        assert trace.name == "codex-turn"
+        assert trace.name == "codex-turn: Run live trace"
         assert trace.session_id == session_id
-        assert "exec_command" in observation_names
-        assert "assistant-response" in observation_names
+        assert trace.input
+        assert trace.output
+        assert trace.metadata["turn_id"] == turn_id
+        assert trace.metadata["token_summary"]["total_token_usage"]["total_tokens"] == 15
+        assert trace.metadata["task_duration_ms"] == 2000
+        assert len(exec_observations) == 1
+        assert assistant_observations
+        exec_metadata = exec_observations[0].metadata
+        assert exec_metadata["read_paths"] == [str(Path.cwd() / "README.md")]
     finally:
         api_client.api.trace.delete(trace_id)
         api_client.shutdown()

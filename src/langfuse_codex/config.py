@@ -23,6 +23,7 @@ class HookConfig:
     state_dir: Path
     max_payload_bytes: int
     log_level: str
+    capture_agent_messages: bool
     public_key: str | None
     secret_key: str | None
     base_url: str | None
@@ -47,8 +48,8 @@ class HookConfig:
             state_dir=state_dir,
             max_payload_bytes=int(os.getenv("LANGFUSE_CODEX_MAX_PAYLOAD_BYTES", "131072")),
             log_level=os.getenv("LANGFUSE_CODEX_LOG_LEVEL", "INFO").upper(),
+            capture_agent_messages=os.getenv("LANGFUSE_CODEX_CAPTURE_AGENT_MESSAGES", "").lower() in {"1", "true", "yes"},
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
             base_url=os.getenv("LANGFUSE_BASE_URL") or os.getenv("LANGFUSE_HOST"),
         )
-

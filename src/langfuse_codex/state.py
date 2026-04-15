@@ -17,8 +17,10 @@ MAX_TURNS_PER_SESSION = 32
 class TurnState:
     trace_id: str
     root_observation_id: str | None = None
+    trace_name: str | None = None
     prompt: str | None = None
     last_assistant_message: str | None = None
+    trace_metadata: dict[str, Any] = field(default_factory=dict)
     closed: bool = False
 
     @classmethod
@@ -26,8 +28,10 @@ class TurnState:
         return cls(
             trace_id=data["trace_id"],
             root_observation_id=data.get("root_observation_id"),
+            trace_name=data.get("trace_name"),
             prompt=data.get("prompt"),
             last_assistant_message=data.get("last_assistant_message"),
+            trace_metadata=dict(data.get("trace_metadata", {})),
             closed=bool(data.get("closed", False)),
         )
 
@@ -127,4 +131,3 @@ class SessionStateStore:
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(state.to_dict(), handle, indent=2, sort_keys=True)
         os.replace(tmp_path, state_path)
-

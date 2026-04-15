@@ -6,6 +6,11 @@ from typing import Any
 
 import langfuse as langfuse_module
 from langfuse import Langfuse
+from langfuse._client.attributes import (
+    LangfuseOtelSpanAttributes,
+    _flatten_and_serialize_metadata,
+    create_trace_attributes,
+)
 
 from langfuse_codex.config import HookConfig
 from langfuse_codex.redaction import sanitize_payload
@@ -22,6 +27,8 @@ class TraceContext:
     cwd: str
     model: str | None
     transcript_path: str | None
+    trace_name: str
+    trace_metadata: dict[str, Any]
 
 
 class LangfuseTracer:
@@ -52,29 +59,41 @@ class LangfuseTracer:
         if turn_state:
             if prompt and not turn_state.prompt:
                 turn_state.prompt = prompt
+            if trace_context.trace_name:
+                turn_state.trace_name = trace_context.trace_name
+            if trace_context.trace_metadata:
+                turn_state.trace_metadata.update(trace_context.trace_metadata)
             return turn_state
 
         trace_id = self.client.create_trace_id(seed=f"{trace_context.session_id}:{trace_context.turn_id}")
         trace_meta = self._trace_metadata(trace_context)
+        sanitized_prompt, _ = sanitize_payload(prompt, self.config.max_payload_bytes)
+        metadata = {"turn_id": trace_context.turn_id}
+        if trace_context.cwd:
+            metadata["cwd"] = trace_context.cwd
+        if trace_context.model:
+            metadata["model"] = trace_context.model
 
         with self.client.start_as_current_observation(
             trace_context={"trace_id": trace_id},
-            name="codex-turn",
+            name=trace_context.trace_name,
             as_type="agent",
-            input=prompt,
-            metadata={"turn_id": trace_context.turn_id, "cwd": trace_context.cwd, "model": trace_context.model},
+            input=sanitized_prompt,
+            metadata=metadata,
         ):
-            with langfuse_module.propagate_attributes(
-                session_id=trace_context.session_id,
-                trace_name="codex-turn",
-                metadata=trace_meta,
-            ):
-                root_observation_id = self.client.get_current_observation_id()
+            self._apply_trace_attributes(
+                trace_context,
+                trace_input=sanitized_prompt,
+                trace_output=None,
+            )
+            root_observation_id = self.client.get_current_observation_id()
 
         turn_state = TurnState(
             trace_id=trace_id,
             root_observation_id=root_observation_id,
+            trace_name=trace_context.trace_name,
             prompt=prompt,
+            trace_metadata=trace_meta,
         )
         state.turns[trace_context.turn_id] = turn_state
         return turn_state
@@ -87,11 +106,26 @@ class LangfuseTracer:
     ) -> None:
         sanitized_input, input_meta = sanitize_payload(observation.input_data, self.config.max_payload_bytes)
         sanitized_output, output_meta = sanitize_payload(observation.output_data, self.config.max_payload_bytes)
-
-        metadata = dict(observation.metadata)
+        metadata = {
+            "tool_family": observation.tool_family,
+            "tool_name": observation.tool_name,
+            "status": observation.status,
+            "duration_ms": observation.duration_ms,
+            "exit_code": observation.exit_code,
+            "codex_event_types": observation.codex_event_types,
+            "read_paths": observation.read_paths,
+            "write_paths": observation.write_paths,
+            "search_paths": observation.search_paths,
+            "referenced_paths": observation.referenced_paths,
+            "pty_session_id": observation.pty_session_id,
+            "debug_payloads": observation.debug_payloads,
+            **dict(observation.metadata),
+        }
+        sanitized_metadata, metadata_meta = sanitize_payload(metadata, self.config.max_payload_bytes)
+        metadata = dict(sanitized_metadata)
         metadata["input_sanitization"] = input_meta
         metadata["output_sanitization"] = output_meta
-        metadata["turn_id"] = observation.turn_id
+        metadata["metadata_sanitization"] = metadata_meta
 
         parent = {"trace_id": turn_state.trace_id}
         if turn_state.root_observation_id:
@@ -105,12 +139,11 @@ class LangfuseTracer:
             output=sanitized_output,
             metadata=metadata,
         ):
-            with langfuse_module.propagate_attributes(
-                session_id=trace_context.session_id,
-                trace_name="codex-turn",
-                metadata=self._trace_metadata(trace_context),
-            ):
-                pass
+            self._apply_trace_attributes(
+                trace_context,
+                trace_input=self._trace_input(turn_state),
+                trace_output=self._trace_output(turn_state),
+            )
 
     def record_assistant_response(
         self,
@@ -122,23 +155,22 @@ class LangfuseTracer:
         parent = {"trace_id": turn_state.trace_id}
         if turn_state.root_observation_id:
             parent["parent_span_id"] = turn_state.root_observation_id
+        turn_state.last_assistant_message = message
 
-        with langfuse_module.propagate_attributes(
-            session_id=trace_context.session_id,
-            trace_name="codex-turn",
-            metadata=self._trace_metadata(trace_context),
+        with self.client.start_as_current_observation(
+            trace_context=parent,
+            name="assistant-response",
+            as_type="span",
+            output=sanitized_output,
+            metadata={
+                "output_sanitization": output_meta,
+            },
         ):
-            with self.client.start_as_current_observation(
-                trace_context=parent,
-                name="assistant-response",
-                as_type="span",
-                output=sanitized_output,
-                metadata={
-                    "turn_id": trace_context.turn_id,
-                    "output_sanitization": output_meta,
-                },
-            ):
-                pass
+            self._apply_trace_attributes(
+                trace_context,
+                trace_input=self._trace_input(turn_state),
+                trace_output=sanitized_output,
+            )
 
     def flush(self) -> None:
         self.client.flush()
@@ -146,10 +178,43 @@ class LangfuseTracer:
     def shutdown(self) -> None:
         self.client.shutdown()
 
-    def _trace_metadata(self, context: TraceContext) -> dict[str, str]:
-        metadata = {"cwd": context.cwd}
+    def _trace_metadata(self, context: TraceContext) -> dict[str, Any]:
+        metadata = dict(context.trace_metadata)
+        if context.cwd:
+            metadata.setdefault("cwd", context.cwd)
         if context.model:
-            metadata["model"] = context.model[:200]
-        if context.transcript_path:
-            metadata["transcript_path"] = context.transcript_path[:200]
+            metadata.setdefault("model", context.model[:200])
         return metadata
+
+    def _trace_input(self, turn_state: TurnState) -> Any:
+        sanitized, _ = sanitize_payload(turn_state.prompt, self.config.max_payload_bytes)
+        return sanitized
+
+    def _trace_output(self, turn_state: TurnState) -> Any:
+        sanitized, _ = sanitize_payload(turn_state.last_assistant_message, self.config.max_payload_bytes)
+        return sanitized
+
+    def _apply_trace_attributes(
+        self,
+        context: TraceContext,
+        *,
+        trace_input: Any,
+        trace_output: Any,
+    ) -> None:
+        trace_meta = self._trace_metadata(context)
+        current_span = self.client._get_current_otel_span()
+        if current_span is None or not current_span.is_recording():
+            return
+
+        with langfuse_module.propagate_attributes(
+            session_id=context.session_id,
+            trace_name=context.trace_name,
+            metadata={key: str(value)[:200] for key, value in trace_meta.items() if value is not None},
+        ):
+            current_span.set_attribute(LangfuseOtelSpanAttributes.TRACE_NAME, context.trace_name)
+            current_span.set_attribute(LangfuseOtelSpanAttributes.TRACE_SESSION_ID, context.session_id)
+            for key, value in _flatten_and_serialize_metadata(trace_meta, "trace").items():
+                current_span.set_attribute(key, value)
+            for key, value in create_trace_attributes(input=trace_input, output=trace_output).items():
+                current_span.set_attribute(key, value)
+            self.client.set_current_trace_io(input=trace_input, output=trace_output)

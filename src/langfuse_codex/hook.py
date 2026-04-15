@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
             config=config,
             state_store=SessionStateStore(config.state_dir),
             tracer=LangfuseTracer(config, logger=LOGGER),
-            parser=TranscriptParser(LOGGER),
+            parser=TranscriptParser(LOGGER, capture_agent_messages=config.capture_agent_messages),
         )
         processor.handle(payload)
     except Exception:
@@ -108,7 +108,11 @@ class HookProcessor:
         turn_id = payload.get("turn_id") or state.active_turn_id
         grouped = self._process_transcript_delta(state, payload, fallback_turn_id=turn_id)
         if turn_id:
-            pending = self.parser.flush_pending_calls(state, turn_id)
+            pending = self.parser.flush_pending_calls(
+                state,
+                turn_id,
+                payload.get("cwd") or str(self.config.project_root),
+            )
             if pending:
                 grouped.setdefault(turn_id, []).extend(pending)
 
@@ -145,10 +149,13 @@ class HookProcessor:
             fallback_turn_id=fallback_turn_id,
             cwd=payload.get("cwd") or str(self.config.project_root),
         )
-        for turn_id, message in parsed.assistant_messages.items():
+        for turn_id, update in parsed.turn_updates.items():
             turn_state = state.turns.get(turn_id)
             if turn_state:
-                turn_state.last_assistant_message = message
+                if update.assistant_message:
+                    turn_state.last_assistant_message = update.assistant_message
+                if update.trace_metadata:
+                    turn_state.trace_metadata.update(update.trace_metadata)
 
         grouped: dict[str, list[ObservationRecord]] = {}
         for observation in parsed.observations:
@@ -168,12 +175,16 @@ class HookProcessor:
                 self.tracer.record_observation(turn_state, trace_context, observation)
 
     def _build_trace_context(self, state, payload: dict[str, Any], turn_id: str) -> TraceContext:
+        turn_state = state.turns.get(turn_id)
+        prompt = payload.get("prompt") or (turn_state.prompt if turn_state else None)
         return TraceContext(
             session_id=state.session_id,
             turn_id=turn_id,
             cwd=payload.get("cwd") or state.session_metadata.get("cwd") or str(self.config.project_root),
             model=payload.get("model") or state.session_metadata.get("model"),
             transcript_path=state.transcript_path,
+            trace_name=_build_trace_name(prompt),
+            trace_metadata=_build_trace_metadata(state, turn_id),
         )
 
     def _fallback_post_tool_observation(
@@ -187,14 +198,36 @@ class HookProcessor:
             return None
 
         return ObservationRecord(
-            stable_key=f"post-tool-use:{payload.get('tool_use_id') or turn_id}",
-            name=str(payload.get("tool_name") or "Bash"),
+            logical_id=f"post-tool-use:{payload.get('tool_use_id') or turn_id}",
+            tool_name=str(payload.get("tool_name") or "codex.Bash"),
             kind="tool",
             turn_id=turn_id,
+            tool_family="codex",
             input_data=tool_input,
             output_data=tool_response,
             metadata={"source": "hook_payload_fallback"},
         )
+
+
+def _build_trace_name(prompt: str | None) -> str:
+    if not prompt:
+        return "codex-turn"
+    first_line = prompt.strip().splitlines()[0]
+    first_clause = first_line.split(".")[0].split("?")[0].split("!")[0].strip()
+    snippet = first_clause[:72].strip()
+    return f"codex-turn: {snippet}" if snippet else "codex-turn"
+
+
+def _build_trace_metadata(state, turn_id: str) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"turn_id": turn_id}
+    for key in ("cwd", "cli_version", "originator", "source", "model_provider"):
+        value = state.session_metadata.get(key)
+        if value:
+            metadata[key] = value
+    turn_state = state.turns.get(turn_id)
+    if turn_state and turn_state.trace_metadata:
+        metadata.update(turn_state.trace_metadata)
+    return metadata
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -225,4 +258,3 @@ def _configure_logging(config: HookConfig) -> None:
             logging.StreamHandler(sys.stderr),
         ],
     )
-
