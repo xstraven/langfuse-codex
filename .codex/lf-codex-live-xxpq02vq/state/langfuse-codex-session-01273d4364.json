@@ -1,0 +1,27 @@
+{
+  "active_turn_id": null,
+  "pending_events": {},
+  "pending_tool_calls": {},
+  "recent_event_hashes": [
+    "4343223bf0ec5bbff84d1ce547c855f3f8db325d45bf2d903099bb38199f27d3",
+    "7db4ceaa0d34a05bbde11702e883e52440f8edc93583a926bba3e89d08ab23cd",
+    "930a2f2b17919f4e8662f360271f10556a235be6e5b340ff0fa23433a55b7566",
+    "1e71896b63bb4b7c5cff91a13e64c31e93e46f2586b96e7eae2568fdb1a25d60"
+  ],
+  "session_id": "langfuse-codex-session-01273d4364",
+  "session_metadata": {
+    "cwd": "/Users/david/projects/langfuse-codex",
+    "model": "gpt-5.4"
+  },
+  "transcript_offset": 1004,
+  "transcript_path": "/Users/david/projects/langfuse-codex/.codex/lf-codex-live-xxpq02vq/transcript.jsonl",
+  "turns": {
+    "langfuse-codex-turn-9c102c46cb": {
+      "closed": true,
+      "last_assistant_message": "Langfuse integration finished",
+      "prompt": "Run live trace",
+      "root_observation_id": "3d6bd652670584c5",
+      "trace_id": "c9e6ace253b54d01602feee2c1df5ee1"
+    }
+  }
+}

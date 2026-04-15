@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langfuse-codex"
+version = "0.1.0"
+description = "Codex hook ingestor that ships transcript-derived traces to Langfuse."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "langfuse>=3.10.1",
+  "python-dotenv>=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.5",
+]
+
+[project.scripts]
+codex-langfuse-hook = "langfuse_codex.hook:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/langfuse_codex"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+

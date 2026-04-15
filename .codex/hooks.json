@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
+            "statusMessage": "Initializing Langfuse Codex tracing"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
+            "statusMessage": "Starting Langfuse turn trace"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
+            "statusMessage": "Sending Codex tool telemetry to Langfuse"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
+            "statusMessage": "Finalizing Langfuse turn trace",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+

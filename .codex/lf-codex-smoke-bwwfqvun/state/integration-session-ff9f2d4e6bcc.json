@@ -1,0 +1,27 @@
+{
+  "active_turn_id": null,
+  "pending_events": {},
+  "pending_tool_calls": {},
+  "recent_event_hashes": [
+    "ec32de2345b710d53c524c860b10315b235207a979abdb66cb28369c7d187e90",
+    "be6672fb90a2eb95fbae099f701b9c18c069754ab654395d9c1849ae3925da13",
+    "fadc6525672a51e3821787a6cc2164faefad90b489fc825ae215fe01294609cd",
+    "9cad4716ea7e89f63b977c424b54d80f93892f02ec47f238cee7cd7b3ed36d0a"
+  ],
+  "session_id": "integration-session-ff9f2d4e6bcc",
+  "session_metadata": {
+    "cwd": "/Users/david/projects/langfuse-codex",
+    "model": "gpt-5.4"
+  },
+  "transcript_offset": 1016,
+  "transcript_path": "/Users/david/projects/langfuse-codex/.codex/lf-codex-smoke-bwwfqvun/transcript.jsonl",
+  "turns": {
+    "integration-turn-a99967e6bda0": {
+      "closed": true,
+      "last_assistant_message": "Integration finished",
+      "prompt": "Integration prompt",
+      "root_observation_id": "07f904aea8cefc52",
+      "trace_id": "2303ed851abdb35a4333fb74c37b0ec1"
+    }
+  }
+}

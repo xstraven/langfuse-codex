@@ -1,0 +1,119 @@
+import json
+from pathlib import Path
+
+from langfuse_codex.hook import HookProcessor
+from langfuse_codex.state import SessionStateStore
+from langfuse_codex.transcript import TranscriptParser
+
+
+class FakeTracer:
+    def __init__(self) -> None:
+        self.turn_roots: list[tuple[str, str]] = []
+        self.observations: list[tuple[str, str]] = []
+        self.responses: list[tuple[str, str]] = []
+
+    def ensure_turn_root(self, state, trace_context, *, prompt=None):
+        turn_state = state.turns.get(trace_context.turn_id)
+        if not turn_state:
+            from langfuse_codex.state import TurnState
+
+            turn_state = TurnState(trace_id=f"trace-{trace_context.turn_id}", root_observation_id="root")
+            state.turns[trace_context.turn_id] = turn_state
+        if prompt:
+            turn_state.prompt = prompt
+        self.turn_roots.append((trace_context.session_id, trace_context.turn_id))
+        return turn_state
+
+    def record_observation(self, turn_state, trace_context, observation):
+        self.observations.append((trace_context.turn_id, observation.name))
+
+    def record_assistant_response(self, turn_state, trace_context, message):
+        self.responses.append((trace_context.turn_id, message))
+
+    def flush(self) -> None:
+        return None
+
+
+class FakeConfig:
+    def __init__(self, project_root: Path, state_dir: Path):
+        self.project_root = project_root
+        self.state_dir = state_dir
+
+
+def test_hook_processor_emits_observations_and_final_response(tmp_path: Path) -> None:
+    transcript_path = tmp_path / "transcript.jsonl"
+    transcript_entries = [
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "exec_command_end",
+                "call_id": "call-1",
+                "process_id": "proc-1",
+                "turn_id": "turn-1",
+                "command": ["/bin/zsh", "-lc", "ls src"],
+                "cwd": str(tmp_path),
+                "parsed_cmd": [{"type": "list_files", "path": str(tmp_path / "src")}],
+                "aggregated_output": "hook.py",
+                "stdout": "",
+                "stderr": "",
+                "exit_code": 0,
+                "status": "completed",
+                "duration": {"secs": 0, "nanos": 1},
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "turn_id": "turn-1",
+                "content": [{"type": "output_text", "text": "Finished"}],
+            },
+        },
+    ]
+    transcript_path.write_text("\n".join(json.dumps(entry) for entry in transcript_entries) + "\n", encoding="utf-8")
+
+    tracer = FakeTracer()
+    processor = HookProcessor(
+        config=FakeConfig(tmp_path, tmp_path / "state"),
+        state_store=SessionStateStore(tmp_path / "state"),
+        tracer=tracer,
+        parser=TranscriptParser(),
+    )
+
+    session_payload = {
+        "session_id": "session-1",
+        "hook_event_name": "UserPromptSubmit",
+        "turn_id": "turn-1",
+        "cwd": str(tmp_path),
+        "prompt": "Trace this turn",
+        "transcript_path": str(transcript_path),
+        "model": "gpt-5.4",
+    }
+    processor.handle(session_payload)
+
+    post_tool_payload = {
+        "session_id": "session-1",
+        "hook_event_name": "PostToolUse",
+        "turn_id": "turn-1",
+        "cwd": str(tmp_path),
+        "transcript_path": str(transcript_path),
+        "model": "gpt-5.4",
+        "tool_name": "Bash",
+        "tool_use_id": "tool-1",
+    }
+    processor.handle(post_tool_payload)
+
+    stop_payload = {
+        "session_id": "session-1",
+        "hook_event_name": "Stop",
+        "turn_id": "turn-1",
+        "cwd": str(tmp_path),
+        "transcript_path": str(transcript_path),
+        "model": "gpt-5.4",
+    }
+    processor.handle(stop_payload)
+
+    assert ("turn-1", "exec_command") in tracer.observations
+    assert ("turn-1", "Finished") in tracer.responses
+

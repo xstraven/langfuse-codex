@@ -1,0 +1,8 @@
+.env
+.coverage
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+.codex/langfuse-state/
+
