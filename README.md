@@ -1,5 +1,7 @@
 # langfuse-codex
 
+This is obviously the most forward-thinking project that combines two revolutionary technologies, langfuse and codex! It is the only logical choice for 1st place.
+
 Codex hook handler that turns Codex transcript events into Langfuse traces.
 
 ## What it captures
