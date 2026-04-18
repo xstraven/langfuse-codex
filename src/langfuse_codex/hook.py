@@ -55,10 +55,7 @@ class HookProcessor:
         cwd = payload.get("cwd") or str(self.config.project_root)
 
         with self.state_store.open(session_id) as state:
-            state.transcript_path = payload.get("transcript_path") or state.transcript_path
-            state.session_metadata.update(
-                {key: str(value) for key, value in {"cwd": cwd, "model": payload.get("model")}.items() if value}
-            )
+            self._remember_hook_payload_metadata(state, payload, cwd)
 
             if hook_event_name == "SessionStart":
                 self._handle_session_start(state, payload)
@@ -66,6 +63,10 @@ class HookProcessor:
 
             if hook_event_name == "UserPromptSubmit":
                 self._handle_user_prompt_submit(state, payload)
+                return
+
+            if hook_event_name == "PreToolUse":
+                self._handle_pre_tool_use(state, payload)
                 return
 
             if hook_event_name == "PostToolUse":
@@ -90,6 +91,19 @@ class HookProcessor:
         self.tracer.ensure_turn_root(state, trace_context, prompt=payload.get("prompt"))
         self.tracer.flush()
 
+    def _handle_pre_tool_use(self, state, payload: dict[str, Any]) -> None:
+        turn_id = payload.get("turn_id") or state.active_turn_id
+        if not turn_id:
+            return
+
+        state.active_turn_id = turn_id
+        self.parser.remember_pre_tool_use(
+            state,
+            payload,
+            turn_id=turn_id,
+            cwd=payload.get("cwd") or str(self.config.project_root),
+        )
+
     def _handle_post_tool_use(self, state, payload: dict[str, Any]) -> None:
         turn_id = payload.get("turn_id") or state.active_turn_id
         if turn_id:
@@ -97,7 +111,7 @@ class HookProcessor:
 
         grouped = self._process_transcript_delta(state, payload, fallback_turn_id=turn_id)
         if not grouped and turn_id:
-            fallback = self._fallback_post_tool_observation(payload, turn_id)
+            fallback = self._fallback_post_tool_observation(state, payload, turn_id)
             if fallback:
                 grouped = {turn_id: [fallback]}
 
@@ -184,11 +198,15 @@ class HookProcessor:
             model=payload.get("model") or state.session_metadata.get("model"),
             transcript_path=state.transcript_path,
             trace_name=_build_trace_name(prompt),
-            trace_metadata=_build_trace_metadata(state, turn_id),
+            trace_metadata={
+                **_build_trace_metadata(state, turn_id),
+                **_build_payload_turn_metadata(payload),
+            },
         )
 
     def _fallback_post_tool_observation(
         self,
+        state,
         payload: dict[str, Any],
         turn_id: str,
     ) -> ObservationRecord | None:
@@ -197,16 +215,51 @@ class HookProcessor:
         if tool_input is None and tool_response is None:
             return None
 
+        call_id = str(payload.get("tool_use_id") or turn_id)
+        pending = self.parser.pop_pending_hook_tool_use(
+            state,
+            payload,
+            turn_id=turn_id,
+            cwd=payload.get("cwd") or str(self.config.project_root),
+        )
+        if pending:
+            return pending
+
+        tool_family = "terminal" if payload.get("tool_name") == "Bash" else "codex"
+        tool_name = (
+            "terminal.exec"
+            if payload.get("tool_name") == "Bash"
+            else str(payload.get("tool_name") or "codex.tool")
+        )
         return ObservationRecord(
-            logical_id=f"post-tool-use:{payload.get('tool_use_id') or turn_id}",
-            tool_name=str(payload.get("tool_name") or "codex.Bash"),
+            logical_id=f"post-tool-use:{call_id}",
+            tool_name=tool_name,
             kind="tool",
             turn_id=turn_id,
-            tool_family="codex",
+            tool_family=tool_family,
             input_data=tool_input,
             output_data=tool_response,
-            metadata={"source": "hook_payload_fallback"},
+            metadata={
+                "source": "hook_payload_fallback",
+                "tool_use_id": payload.get("tool_use_id"),
+                "permission_mode": payload.get("permission_mode"),
+            },
+            debug_payloads={"post_tool_use": payload},
         )
+
+    def _remember_hook_payload_metadata(self, state, payload: dict[str, Any], cwd: str) -> None:
+        state.transcript_path = payload.get("transcript_path") or state.transcript_path
+        values = {
+            "cwd": cwd,
+            "model": payload.get("model"),
+            "permission_mode": payload.get("permission_mode"),
+        }
+        for key, value in values.items():
+            if value is not None:
+                state.session_metadata[key] = str(value)
+
+        if payload.get("hook_event_name") == "SessionStart" and payload.get("source") is not None:
+            state.session_metadata["session_start_source"] = str(payload["source"])
 
 
 def _build_trace_name(prompt: str | None) -> str:
@@ -220,13 +273,33 @@ def _build_trace_name(prompt: str | None) -> str:
 
 def _build_trace_metadata(state, turn_id: str) -> dict[str, Any]:
     metadata: dict[str, Any] = {"turn_id": turn_id}
-    for key in ("cwd", "cli_version", "originator", "source", "model_provider"):
+    if state.transcript_path:
+        metadata["transcript_path"] = state.transcript_path
+    for key in (
+        "cwd",
+        "cli_version",
+        "originator",
+        "source",
+        "model_provider",
+        "permission_mode",
+        "session_start_source",
+        "thread_name",
+    ):
         value = state.session_metadata.get(key)
         if value:
             metadata[key] = value
     turn_state = state.turns.get(turn_id)
     if turn_state and turn_state.trace_metadata:
         metadata.update(turn_state.trace_metadata)
+    return metadata
+
+
+def _build_payload_turn_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    if payload.get("permission_mode") is not None:
+        metadata["permission_mode"] = payload["permission_mode"]
+    if "stop_hook_active" in payload:
+        metadata["stop_hook_active"] = payload["stop_hook_active"]
     return metadata
 
 

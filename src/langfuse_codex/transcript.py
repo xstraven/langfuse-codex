@@ -165,7 +165,19 @@ class TranscriptParser:
                         parsed.update_turn(turn_id).assistant_message = text
                     continue
 
+                if payload_type == "reasoning" and turn_id:
+                    self._remember_reasoning_summary(parsed, turn_id, payload)
+                    continue
+
             if entry_type != "event_msg":
+                continue
+
+            if payload_type == "user_message" and turn_id:
+                self._remember_user_message(parsed, turn_id, payload)
+                continue
+
+            if payload_type == "thread_name_updated":
+                self._remember_thread_name(state, parsed, turn_id, payload)
                 continue
 
             if payload_type == "task_started" and turn_id:
@@ -191,6 +203,10 @@ class TranscriptParser:
 
             if payload_type == "token_count":
                 self._remember_token_count(parsed, turn_id, payload)
+                continue
+
+            if payload_type == "rate_limits":
+                self._remember_rate_limits(parsed, turn_id, payload)
                 continue
 
             if payload_type == "exec_command_end" and turn_id:
@@ -259,9 +275,77 @@ class TranscriptParser:
         for call_id, pending in list(state.pending_tool_calls.items()):
             if pending.get("turn_id") != turn_id:
                 continue
+            _ensure_pending_defaults(pending, call_id, turn_id=turn_id)
             records.append(self._finalize_pending_call(call_id, pending, cwd, force_pending=True))
             state.pending_tool_calls.pop(call_id, None)
         return records
+
+    def remember_pre_tool_use(
+        self,
+        state: SessionState,
+        payload: dict[str, Any],
+        *,
+        turn_id: str,
+        cwd: str,
+    ) -> None:
+        call_id = str(payload.get("tool_use_id") or f"pre-tool-use:{turn_id}")
+        raw_name = _raw_name_from_hook_tool(payload.get("tool_name"))
+        pending = self._new_pending_call(
+            turn_id=turn_id,
+            call_id=call_id,
+            raw_name=raw_name,
+            input_data=payload.get("tool_input"),
+            payload_type="pre_tool_use",
+            payload=payload,
+            cwd=cwd,
+            status="pending",
+        )
+        pending["metadata"].update(
+            {
+                "source": "hook_payload",
+                "tool_use_id": payload.get("tool_use_id"),
+                "hook_tool_name": payload.get("tool_name"),
+                "permission_mode": payload.get("permission_mode"),
+            }
+        )
+        self._store_pending_call(state, call_id, pending)
+
+    def pop_pending_hook_tool_use(
+        self,
+        state: SessionState,
+        payload: dict[str, Any],
+        *,
+        turn_id: str,
+        cwd: str,
+    ) -> ObservationRecord | None:
+        call_id = str(payload.get("tool_use_id") or "")
+        pending = state.pending_tool_calls.pop(call_id, None) if call_id else None
+        if not pending:
+            return None
+
+        _ensure_pending_defaults(
+            pending,
+            call_id,
+            turn_id=turn_id,
+            raw_name=_raw_name_from_hook_tool(payload.get("tool_name")),
+        )
+        pending["status"] = "completed"
+        pending["output_data"] = payload.get("tool_response")
+        pending["metadata"].update(
+            {
+                "source": "hook_payload_fallback",
+                "tool_use_id": payload.get("tool_use_id"),
+                "hook_tool_name": payload.get("tool_name"),
+                "permission_mode": payload.get("permission_mode"),
+            }
+        )
+        pending["codex_event_types"].append("post_tool_use")
+        pending["debug_payloads"]["post_tool_use"] = payload
+        self._merge_paths(
+            pending,
+            extract_path_buckets(payload.get("tool_input"), payload.get("tool_response"), cwd=cwd),
+        )
+        return self._finalize_pending_call(call_id, pending, cwd)
 
     def _remember_session_meta(self, state: SessionState, payload: dict[str, Any]) -> None:
         for key in TRACE_SESSION_KEYS:
@@ -291,6 +375,43 @@ class TranscriptParser:
         if payload.get("model"):
             state.session_metadata["model"] = str(payload["model"])
 
+    def _remember_user_message(self, parsed: ParsedDelta, turn_id: str, payload: dict[str, Any]) -> None:
+        update = parsed.update_turn(turn_id)
+        update.trace_metadata["user_message"] = {
+            "images_count": len(payload.get("images") or []),
+            "local_images_count": len(payload.get("local_images") or []),
+            "text_elements_count": len(payload.get("text_elements") or []),
+        }
+        if payload.get("images"):
+            update.trace_metadata["user_message"]["images"] = payload.get("images")
+        if payload.get("local_images"):
+            update.trace_metadata["user_message"]["local_images"] = payload.get("local_images")
+        if payload.get("text_elements"):
+            update.trace_metadata["user_message"]["text_elements"] = payload.get("text_elements")
+
+    def _remember_thread_name(
+        self,
+        state: SessionState,
+        parsed: ParsedDelta,
+        turn_id: str | None,
+        payload: dict[str, Any],
+    ) -> None:
+        thread_name = payload.get("thread_name")
+        if not thread_name:
+            return
+        state.session_metadata["thread_name"] = str(thread_name)
+        if turn_id:
+            parsed.update_turn(turn_id).trace_metadata["thread_name"] = str(thread_name)
+
+    def _remember_reasoning_summary(self, parsed: ParsedDelta, turn_id: str, payload: dict[str, Any]) -> None:
+        summary = payload.get("summary")
+        if summary:
+            parsed.update_turn(turn_id).trace_metadata["reasoning_summary"] = summary
+
+    def _remember_rate_limits(self, parsed: ParsedDelta, turn_id: str | None, payload: dict[str, Any]) -> None:
+        if turn_id:
+            parsed.update_turn(turn_id).trace_metadata["rate_limits"] = payload.get("rate_limits") or payload
+
     def _remember_function_call(
         self,
         state: SessionState,
@@ -312,7 +433,7 @@ class TranscriptParser:
             payload=payload,
             cwd=cwd,
         )
-        state.pending_tool_calls[call_id] = pending
+        self._store_pending_call(state, call_id, pending)
 
     def _remember_custom_tool_call(
         self,
@@ -336,7 +457,7 @@ class TranscriptParser:
             cwd=cwd,
             status=payload.get("status"),
         )
-        state.pending_tool_calls[call_id] = pending
+        self._store_pending_call(state, call_id, pending)
 
     def _handle_function_call_output(
         self,
@@ -349,6 +470,7 @@ class TranscriptParser:
         pending = state.pending_tool_calls.get(call_id) if call_id else None
         if not pending:
             return None
+        _ensure_pending_defaults(pending, str(call_id), turn_id=turn_id, raw_name="function_call")
 
         pending["output_data"] = _maybe_parse_json(payload.get("output"))
         pending["codex_event_types"].append("function_call_output")
@@ -371,6 +493,7 @@ class TranscriptParser:
         pending = state.pending_tool_calls.get(call_id) if call_id else None
         if not pending:
             return None
+        _ensure_pending_defaults(pending, str(call_id), turn_id=turn_id, raw_name="custom_tool_call")
 
         pending["output_data"] = _maybe_parse_json(payload.get("output"))
         pending["codex_event_types"].append("custom_tool_call_output")
@@ -402,6 +525,7 @@ class TranscriptParser:
                 cwd=cwd,
             )
         else:
+            _ensure_pending_defaults(pending, call_id, turn_id=turn_id, raw_name="exec_command")
             pending["codex_event_types"].append("exec_command_end")
             pending["debug_payloads"]["exec_command_end"] = payload
 
@@ -484,6 +608,7 @@ class TranscriptParser:
                 cwd=cwd,
             )
         else:
+            _ensure_pending_defaults(pending, call_id, turn_id=turn_id, raw_name="apply_patch")
             pending["codex_event_types"].append("patch_apply_end")
             pending["debug_payloads"]["patch_apply_end"] = payload
 
@@ -635,6 +760,32 @@ class TranscriptParser:
         self._merge_paths(pending, extract_path_buckets(input_data, payload, cwd=cwd))
         return pending
 
+    def _store_pending_call(self, state: SessionState, call_id: str, pending: dict[str, Any]) -> None:
+        existing = state.pending_tool_calls.get(call_id)
+        if not existing:
+            state.pending_tool_calls[call_id] = pending
+            return
+
+        _ensure_pending_defaults(existing, call_id, turn_id=pending.get("turn_id"), raw_name=pending.get("raw_name"))
+        existing["turn_id"] = pending.get("turn_id") or existing.get("turn_id")
+        existing["raw_name"] = pending.get("raw_name") or existing.get("raw_name")
+        existing["tool_family"] = pending.get("tool_family") or existing.get("tool_family")
+        existing["tool_name"] = pending.get("tool_name") or existing.get("tool_name")
+        existing["status"] = pending.get("status") or existing.get("status")
+        if existing.get("input_data") is None:
+            existing["input_data"] = pending.get("input_data")
+        if existing.get("output_data") is None:
+            existing["output_data"] = pending.get("output_data")
+        existing["metadata"].update(pending.get("metadata", {}))
+        existing["debug_payloads"].update(pending.get("debug_payloads", {}))
+        for event_type in pending.get("codex_event_types", []):
+            if event_type not in existing["codex_event_types"]:
+                existing["codex_event_types"].append(event_type)
+        self._merge_paths(
+            existing,
+            {key: pending.get(key, []) for key in ("read_paths", "write_paths", "search_paths", "referenced_paths")},
+        )
+
     def _finalize_pending_call(
         self,
         call_id: str,
@@ -643,6 +794,7 @@ class TranscriptParser:
         *,
         force_pending: bool = False,
     ) -> ObservationRecord:
+        _ensure_pending_defaults(pending, call_id)
         metadata = dict(pending["metadata"])
         if force_pending and not pending.get("status"):
             metadata["pending"] = True
@@ -752,6 +904,43 @@ def _normalize_tool_identity(raw_name: str) -> tuple[str | None, str]:
     if raw_name.startswith("web."):
         return "web", raw_name
     return "codex", raw_name
+
+
+def _raw_name_from_hook_tool(tool_name: Any) -> str:
+    if tool_name == "Bash":
+        return "exec_command"
+    if tool_name:
+        return str(tool_name)
+    return "hook_tool"
+
+
+def _ensure_pending_defaults(
+    pending: dict[str, Any],
+    call_id: str,
+    *,
+    turn_id: str | None = None,
+    raw_name: str | None = None,
+) -> None:
+    pending_raw_name = str(pending.get("raw_name") or raw_name or pending.get("tool_name") or "tool")
+    tool_family, tool_name = _normalize_tool_identity(pending_raw_name)
+    pending.setdefault("turn_id", turn_id)
+    pending.setdefault("raw_name", pending_raw_name)
+    pending.setdefault("tool_family", tool_family)
+    pending.setdefault("tool_name", tool_name)
+    pending.setdefault("status", None)
+    pending.setdefault("input_data", None)
+    pending.setdefault("output_data", None)
+    pending.setdefault("duration_ms", None)
+    pending.setdefault("exit_code", None)
+    pending.setdefault("codex_event_types", [])
+    pending.setdefault("metadata", {"call_id": call_id})
+    pending.setdefault("debug_payloads", {})
+    pending.setdefault("read_paths", [])
+    pending.setdefault("write_paths", [])
+    pending.setdefault("search_paths", [])
+    pending.setdefault("referenced_paths", [])
+    pending.setdefault("pty_session_id", None)
+    pending["metadata"].setdefault("call_id", call_id)
 
 
 def _duration_to_ms(value: Any) -> int | None:

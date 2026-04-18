@@ -2,7 +2,7 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume",
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
             "type": "command",
@@ -19,6 +19,18 @@
             "type": "command",
             "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
             "statusMessage": "Starting Langfuse turn trace"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
+            "statusMessage": "Capturing Codex command intent"
           }
         ]
       }
@@ -49,4 +61,3 @@
     ]
   }
 }
-

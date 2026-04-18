@@ -10,6 +10,7 @@ class FakeTracer:
     def __init__(self) -> None:
         self.turn_roots: list[tuple[str, str]] = []
         self.observations: list[tuple[str, str]] = []
+        self.observation_records = []
         self.responses: list[tuple[str, str]] = []
         self.trace_names: list[str] = []
         self.trace_metadata: list[dict[str, object]] = []
@@ -32,6 +33,7 @@ class FakeTracer:
 
     def record_observation(self, turn_state, trace_context, observation):
         self.observations.append((trace_context.turn_id, observation.name))
+        self.observation_records.append(observation)
 
     def record_assistant_response(self, turn_state, trace_context, message):
         self.responses.append((trace_context.turn_id, message))
@@ -117,9 +119,61 @@ def test_hook_processor_emits_observations_and_final_response(tmp_path: Path) ->
         "cwd": str(tmp_path),
         "transcript_path": str(transcript_path),
         "model": "gpt-5.4",
+        "stop_hook_active": False,
     }
     processor.handle(stop_payload)
 
     assert ("turn-1", "terminal.exec") in tracer.observations
     assert ("turn-1", "Finished") in tracer.responses
     assert tracer.trace_names[-1] == "codex-turn: Trace this turn"
+    assert tracer.trace_metadata[-1]["stop_hook_active"] is False
+
+
+def test_hook_processor_captures_pre_tool_use_and_permission_mode(tmp_path: Path) -> None:
+    transcript_path = tmp_path / "transcript.jsonl"
+    transcript_path.write_text("", encoding="utf-8")
+    tracer = FakeTracer()
+    processor = HookProcessor(
+        config=FakeConfig(tmp_path, tmp_path / "state"),
+        state_store=SessionStateStore(tmp_path / "state"),
+        tracer=tracer,
+        parser=TranscriptParser(),
+    )
+
+    common = {
+        "session_id": "session-1",
+        "turn_id": "turn-1",
+        "cwd": str(tmp_path),
+        "transcript_path": str(transcript_path),
+        "model": "gpt-5.4",
+        "permission_mode": "acceptEdits",
+    }
+    processor.handle({**common, "hook_event_name": "UserPromptSubmit", "prompt": "Trace pre hooks"})
+    processor.handle(
+        {
+            **common,
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": "tool-1",
+            "tool_input": {"command": "printf hello"},
+        }
+    )
+    processor.handle(
+        {
+            **common,
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": "tool-1",
+            "tool_input": {"command": "printf hello"},
+            "tool_response": "hello",
+        }
+    )
+
+    assert tracer.trace_metadata[0]["permission_mode"] == "acceptEdits"
+    observation = tracer.observation_records[-1]
+    assert observation.tool_name == "terminal.exec"
+    assert observation.input_data == {"command": "printf hello"}
+    assert observation.output_data == "hello"
+    assert observation.metadata["tool_use_id"] == "tool-1"
+    assert observation.metadata["permission_mode"] == "acceptEdits"
+    assert set(observation.codex_event_types) == {"pre_tool_use", "post_tool_use"}

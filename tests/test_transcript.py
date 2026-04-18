@@ -153,3 +153,46 @@ def test_parse_assistant_message() -> None:
     parsed = parser.parse_entries(entries, state=state, fallback_turn_id="turn-1", cwd="/repo")
 
     assert parsed.turn_updates["turn-1"].assistant_message == "Done"
+
+
+def test_parse_session_metadata_from_current_transcript_events() -> None:
+    parser = TranscriptParser()
+    state = SessionState(session_id="session-1")
+    entries = [
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Inspect this",
+                "images": ["img-1"],
+                "local_images": [{"path": "/tmp/local.png"}],
+                "text_elements": [{"text": "selected"}],
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "thread_name_updated",
+                "thread_id": "session-1",
+                "thread_name": "Inspect hooks",
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "reasoning",
+                "summary": [{"text": "Checked docs"}],
+                "encrypted_content": "opaque",
+            },
+        },
+    ]
+
+    parsed = parser.parse_entries(entries, state=state, fallback_turn_id="turn-1", cwd="/repo")
+    metadata = parsed.turn_updates["turn-1"].trace_metadata
+
+    assert state.session_metadata["thread_name"] == "Inspect hooks"
+    assert metadata["thread_name"] == "Inspect hooks"
+    assert metadata["user_message"]["images_count"] == 1
+    assert metadata["user_message"]["local_images_count"] == 1
+    assert metadata["user_message"]["text_elements_count"] == 1
+    assert metadata["reasoning_summary"] == [{"text": "Checked docs"}]

@@ -8,11 +8,14 @@ Codex hook handler that turns Codex transcript events into Langfuse traces.
 
 - one Langfuse trace per Codex turn
 - raw tool inputs and outputs with truncation at `128 KiB` by default
+- pre-run Bash command intent from `PreToolUse`, including `permission_mode`
 - used file paths derived from structured transcript fields first, with a command-string fallback
 - Codex session grouping via Langfuse `session_id`
+- Codex session metadata including CLI version, originator, model provider, transcript path, thread name, and session start source
+- turn metadata for token usage, rate limits, collaboration mode, task timing, and user-message attachment fields
 - assistant turn-complete output as a child event on stop
 
-The hook process treats Codex's `transcript_path` JSONL as the source of truth. Hook payloads are used mainly to know when to parse and how to associate a turn.
+The hook process treats Codex's `transcript_path` JSONL as the source of truth. Hook payloads are also used for schema fields that may not be present in transcript events, such as `permission_mode`, `PreToolUse.tool_input`, and `Stop.stop_hook_active`.
 
 ## Setup
 
