@@ -20,6 +20,7 @@ dev = [
 
 [project.scripts]
 codex-langfuse-hook = "langfuse_codex.hook:main"
+codex-langfuse-sender = "langfuse_codex.sender:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/langfuse_codex"]
@@ -27,4 +28,3 @@ packages = ["src/langfuse_codex"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-

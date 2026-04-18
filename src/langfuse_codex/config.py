@@ -24,6 +24,9 @@ class HookConfig:
     max_payload_bytes: int
     log_level: str
     capture_agent_messages: bool
+    delivery_mode: str
+    sender_idle_seconds: float
+    queue_max_events: int
     public_key: str | None
     secret_key: str | None
     base_url: str | None
@@ -49,6 +52,9 @@ class HookConfig:
             max_payload_bytes=int(os.getenv("LANGFUSE_CODEX_MAX_PAYLOAD_BYTES", "131072")),
             log_level=os.getenv("LANGFUSE_CODEX_LOG_LEVEL", "INFO").upper(),
             capture_agent_messages=os.getenv("LANGFUSE_CODEX_CAPTURE_AGENT_MESSAGES", "").lower() in {"1", "true", "yes"},
+            delivery_mode=os.getenv("LANGFUSE_CODEX_DELIVERY_MODE", "queued").lower(),
+            sender_idle_seconds=float(os.getenv("LANGFUSE_CODEX_SENDER_IDLE_SECONDS", "30")),
+            queue_max_events=int(os.getenv("LANGFUSE_CODEX_QUEUE_MAX_EVENTS", "10000")),
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
             base_url=os.getenv("LANGFUSE_BASE_URL") or os.getenv("LANGFUSE_HOST"),

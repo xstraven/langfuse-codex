@@ -10,9 +10,10 @@ def test_session_state_round_trip(tmp_path: Path) -> None:
         state.transcript_offset = 42
         state.active_turn_id = "turn-1"
         state.session_metadata["cwd"] = "/repo"
+        state.remember_queue_event("event-1")
 
     with store.open("session-1") as state:
         assert state.transcript_offset == 42
         assert state.active_turn_id == "turn-1"
         assert state.session_metadata["cwd"] == "/repo"
-
+        assert state.has_processed_queue_event("event-1")

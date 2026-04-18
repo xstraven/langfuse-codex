@@ -10,6 +10,7 @@ from typing import Any, Iterator
 import fcntl
 
 MAX_RECENT_EVENT_HASHES = 2048
+MAX_RECENT_QUEUE_EVENTS = 4096
 MAX_TURNS_PER_SESSION = 32
 
 
@@ -46,6 +47,7 @@ class SessionState:
     turns: dict[str, TurnState] = field(default_factory=dict)
     pending_tool_calls: dict[str, dict[str, Any]] = field(default_factory=dict)
     pending_events: dict[str, dict[str, Any]] = field(default_factory=dict)
+    processed_queue_events: list[str] = field(default_factory=list)
     session_metadata: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -62,6 +64,7 @@ class SessionState:
             },
             pending_tool_calls=dict(data.get("pending_tool_calls", {})),
             pending_events=dict(data.get("pending_events", {})),
+            processed_queue_events=list(data.get("processed_queue_events", [])),
             session_metadata=dict(data.get("session_metadata", {})),
         )
 
@@ -75,6 +78,7 @@ class SessionState:
             "turns": {turn_id: asdict(turn_state) for turn_id, turn_state in self.turns.items()},
             "pending_tool_calls": self.pending_tool_calls,
             "pending_events": self.pending_events,
+            "processed_queue_events": self.processed_queue_events[-MAX_RECENT_QUEUE_EVENTS:],
             "session_metadata": self.session_metadata,
         }
 
@@ -82,6 +86,16 @@ class SessionState:
         self.recent_event_hashes.append(event_hash)
         if len(self.recent_event_hashes) > MAX_RECENT_EVENT_HASHES:
             self.recent_event_hashes = self.recent_event_hashes[-MAX_RECENT_EVENT_HASHES:]
+
+    def remember_queue_event(self, event_id: str) -> None:
+        if event_id in self.processed_queue_events:
+            return
+        self.processed_queue_events.append(event_id)
+        if len(self.processed_queue_events) > MAX_RECENT_QUEUE_EVENTS:
+            self.processed_queue_events = self.processed_queue_events[-MAX_RECENT_QUEUE_EVENTS:]
+
+    def has_processed_queue_event(self, event_id: str) -> bool:
+        return event_id in self.processed_queue_events
 
     def trim_turns(self) -> None:
         if len(self.turns) <= MAX_TURNS_PER_SESSION:

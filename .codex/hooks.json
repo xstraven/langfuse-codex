@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
-            "statusMessage": "Initializing Langfuse Codex tracing"
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py\"",
+            "statusMessage": "Queueing Langfuse Codex telemetry"
           }
         ]
       }
@@ -17,8 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
-            "statusMessage": "Starting Langfuse turn trace"
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py\"",
+            "statusMessage": "Queueing Langfuse Codex telemetry"
           }
         ]
       }
@@ -29,8 +29,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
-            "statusMessage": "Capturing Codex command intent"
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py\"",
+            "statusMessage": "Queueing Langfuse Codex telemetry"
           }
         ]
       }
@@ -41,8 +41,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
-            "statusMessage": "Sending Codex tool telemetry to Langfuse"
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py\"",
+            "statusMessage": "Queueing Langfuse Codex telemetry"
           }
         ]
       }
@@ -52,8 +52,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --project \"$(git rev-parse --show-toplevel)\" codex-langfuse-hook",
-            "statusMessage": "Finalizing Langfuse turn trace",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py\"",
+            "statusMessage": "Queueing Langfuse Codex telemetry",
             "timeout": 30
           }
         ]

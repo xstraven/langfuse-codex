@@ -3,6 +3,7 @@
 This is obviously the most forward-thinking project that combines two revolutionary technologies, langfuse and codex! It is the only logical choice for 1st place.
 
 Codex hook handler that turns Codex transcript events into Langfuse traces.
+Repo-local hooks use a durable local queue so Codex is not blocked on Langfuse network flushes.
 
 ## What it captures
 
@@ -16,6 +17,10 @@ Codex hook handler that turns Codex transcript events into Langfuse traces.
 - assistant turn-complete output as a child event on stop
 
 The hook process treats Codex's `transcript_path` JSONL as the source of truth. Hook payloads are also used for schema fields that may not be present in transcript events, such as `permission_mode`, `PreToolUse.tool_input`, and `Stop.stop_hook_active`.
+
+## Queue mode
+
+By default, `.codex/hooks.json` runs a stdlib-only enqueue script that writes hook payloads under `.codex/langfuse-state/queue/inbox/` and starts `codex-langfuse-sender` in the background. The sender drains the queue, reuses the normal hook processor, and performs Langfuse flushing outside Codex's hook path.
 
 ## Setup
 
@@ -37,11 +42,14 @@ The hook process treats Codex's `transcript_path` JSONL as the source of truth. 
    - `LANGFUSE_CODEX_STATE_DIR` defaults to `.codex/langfuse-state`
    - `LANGFUSE_CODEX_MAX_PAYLOAD_BYTES` defaults to `131072`
    - `LANGFUSE_CODEX_LOG_LEVEL` defaults to `INFO`
+   - `LANGFUSE_CODEX_DELIVERY_MODE` defaults to `queued`; set `direct` to run the processor synchronously
+   - `LANGFUSE_CODEX_SENDER_IDLE_SECONDS` defaults to `30`
+   - `LANGFUSE_CODEX_QUEUE_MAX_EVENTS` defaults to `10000`
 
 4. The repo-local hook config lives in `.codex/hooks.json` and runs:
 
    ```bash
-   uv run --project "$(git rev-parse --show-toplevel)" codex-langfuse-hook
+   python3 "$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py"
    ```
 
 ## Development
@@ -62,6 +70,12 @@ Run the hook manually with a fixture or saved payload:
 
 ```bash
 uv run codex-langfuse-hook < payload.json
+```
+
+Drain queued payloads once:
+
+```bash
+uv run codex-langfuse-sender --once
 ```
 
 The hook writes local logs and state under `.codex/langfuse-state/`.
