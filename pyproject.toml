@@ -19,8 +19,11 @@ dev = [
 ]
 
 [project.scripts]
+codex-langfuse-enqueue = "langfuse_codex.enqueue:main"
 codex-langfuse-hook = "langfuse_codex.hook:main"
+codex-langfuse-launchd = "langfuse_codex.launchd:main"
 codex-langfuse-sender = "langfuse_codex.sender:main"
+codex-langfuse-service = "langfuse_codex.service:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/langfuse_codex"]

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py\"",
+            "command": "codex-langfuse-enqueue",
             "statusMessage": "Queueing Langfuse Codex telemetry"
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py\"",
+            "command": "codex-langfuse-enqueue",
             "statusMessage": "Queueing Langfuse Codex telemetry"
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py\"",
+            "command": "codex-langfuse-enqueue",
             "statusMessage": "Queueing Langfuse Codex telemetry"
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py\"",
+            "command": "codex-langfuse-enqueue",
             "statusMessage": "Queueing Langfuse Codex telemetry"
           }
         ]
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/langfuse_enqueue.py\"",
+            "command": "codex-langfuse-enqueue",
             "statusMessage": "Queueing Langfuse Codex telemetry",
             "timeout": 30
           }
